@@ -26,7 +26,9 @@ LLVMCodeGenerator::LLVMCodeGenerator(TypeSystem& type_system)
     llvm::InitializeAllAsmParsers();
     llvm::InitializeAllAsmPrinters();
     
+    setupTargetMachine();
     initializeTypeMap();
+    initializePyObjectLayout();
 }
 
 void LLVMCodeGenerator::initializeTypeMap() {
@@ -43,6 +45,36 @@ void LLVMCodeGenerator::initializeTypeMap() {
     
     // Any type - represented as void pointer (Python object)
     type_map[type_system.getAnyType().get()] = llvm::Type::getInt8PtrTy(*context);
+}
+
+void LLVMCodeGenerator::initializePyObjectLayout() {
+    // Define Python object layout: { ref_count, type_ptr, data }
+    py_object_layout.type = llvm::StructType::create(*context, "PyObject");
+    py_object_layout.type->setBody({
+        llvm::Type::getInt64Ty(*context),  // ref_count
+        llvm::Type::getInt8PtrTy(*context),  // type_ptr
+        llvm::Type::getInt8PtrTy(*context)   // data_ptr
+    });
+}
+
+void LLVMCodeGenerator::setupTargetMachine() {
+    auto target_triple = llvm::sys::getDefaultTargetTriple();
+    std::string error;
+    auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
+    
+    if (!target) {
+        throw std::runtime_error("Failed to lookup target: " + error);
+    }
+    
+    auto cpu = "generic";
+    auto features = "";
+    llvm::TargetOptions opt;
+    auto rm = llvm::Optional<llvm::Reloc::Model>();
+    target_machine = target->createTargetMachine(target_triple, cpu, features, opt, rm);
+    
+    if (!target_machine) {
+        throw std::runtime_error("Failed to create target machine");
+    }
 }
 
 llvm::Type* LLVMCodeGenerator::getLLVMType(const Type* type) {
@@ -181,12 +213,19 @@ llvm::Function* LLVMCodeGenerator::getLLVMFunction(const IRFunction* function) {
 bool LLVMCodeGenerator::generate(const IRModule& ir_module) {
     // Create LLVM module
     module = std::make_unique<llvm::Module>(ir_module.getName(), *context);
-    module->setDataLayout("");  // Will be set by target machine
+    module->setTargetTriple(target_machine->getTargetTriple().str());
+    module->setDataLayout(target_machine->createDataLayout());
+    
+    // Add runtime declarations
+    declareRuntimeFunctions();
     
     // Generate all functions
     for (const auto& function : ir_module.getFunctions()) {
         generateFunction(function.get());
     }
+    
+    // Generate module initialization
+    generateModuleInit(ir_module);
     
     // Verify module
     std::string error;
@@ -197,6 +236,80 @@ bool LLVMCodeGenerator::generate(const IRModule& ir_module) {
     }
     
     return true;
+}
+
+void LLVMCodeGenerator::declareRuntimeFunctions() {
+    // Declare Python runtime functions
+    std::vector<llvm::Type*> py_object_args = {llvm::Type::getInt8PtrTy(*context)};
+    
+    // Reference counting
+    getOrCreateRuntimeFunction("Py_IncRef", llvm::Type::getVoidTy(*context), py_object_args);
+    getOrCreateRuntimeFunction("Py_DecRef", llvm::Type::getVoidTy(*context), py_object_args);
+    
+    // Object creation
+    getOrCreateRuntimeFunction("PyLong_FromLong", llvm::Type::getInt8PtrTy(*context), 
+                              {llvm::Type::getInt64Ty(*context)});
+    getOrCreateRuntimeFunction("PyFloat_FromDouble", llvm::Type::getInt8PtrTy(*context), 
+                              {llvm::Type::getDoubleTy(*context)});
+    getOrCreateRuntimeFunction("PyUnicode_FromString", llvm::Type::getInt8PtrTy(*context), 
+                              {llvm::Type::getInt8PtrTy(*context)});
+    
+    // Binary operations
+    getOrCreateRuntimeFunction("PyNumber_Add", llvm::Type::getInt8PtrTy(*context), 
+                              {llvm::Type::getInt8PtrTy(*context), llvm::Type::getInt8PtrTy(*context)});
+    getOrCreateRuntimeFunction("PyNumber_Subtract", llvm::Type::getInt8PtrTy(*context), 
+                              {llvm::Type::getInt8PtrTy(*context), llvm::Type::getInt8PtrTy(*context)});
+    getOrCreateRuntimeFunction("PyNumber_Multiply", llvm::Type::getInt8PtrTy(*context), 
+                              {llvm::Type::getInt8PtrTy(*context), llvm::Type::getInt8PtrTy(*context)});
+    getOrCreateRuntimeFunction("PyNumber_TrueDivide", llvm::Type::getInt8PtrTy(*context), 
+                              {llvm::Type::getInt8PtrTy(*context), llvm::Type::getInt8PtrTy(*context)});
+    
+    // Comparison
+    getOrCreateRuntimeFunction("PyObject_RichCompare", llvm::Type::getInt8PtrTy(*context), 
+                              {llvm::Type::getInt8PtrTy(*context), llvm::Type::getInt8PtrTy(*context), 
+                               llvm::Type::getInt32Ty(*context)});
+    
+    // Exception handling
+    getOrCreateRuntimeFunction("PyErr_Occurred", llvm::Type::getInt8PtrTy(*context), {});
+    getOrCreateRuntimeFunction("PyErr_SetString", llvm::Type::getVoidTy(*context), 
+                              {llvm::Type::getInt8PtrTy(*context), llvm::Type::getInt8PtrTy(*context)});
+}
+
+void LLVMCodeGenerator::generateModuleInit(const IRModule& ir_module) {
+    // Create module initialization function
+    auto init_func_type = llvm::FunctionType::get(llvm::Type::getVoidTy(*context), false);
+    auto init_func = llvm::Function::Create(init_func_type, llvm::Function::ExternalLinkage, 
+                                          "PyInit_" + ir_module.getName(), module.get());
+    
+    auto entry_block = llvm::BasicBlock::Create(*context, "entry", init_func);
+    builder->SetInsertPoint(entry_block);
+    
+    // Initialize runtime
+    auto py_init = getOrCreateRuntimeFunction("Py_Initialize", llvm::Type::getVoidTy(*context), {});
+    builder->CreateCall(py_init);
+    
+    // Initialize module globals
+    for (const auto& global : ir_module.getGlobals()) {
+        generateGlobalVariable(global.get());
+    }
+    
+    builder->CreateRetVoid();
+}
+
+void LLVMCodeGenerator::generateGlobalVariable(const IRGlobal* global) {
+    if (!global) return;
+    
+    auto llvm_type = getLLVMType(global->getType());
+    auto global_var = new llvm::GlobalVariable(*module, llvm_type, false, 
+                                             llvm::GlobalValue::ExternalLinkage, 
+                                             nullptr, global->getName());
+    
+    if (global->getInitializer()) {
+        auto init_value = getLLVMValue(global->getInitializer());
+        if (init_value) {
+            global_var->setInitializer(llvm::cast<llvm::Constant>(init_value));
+        }
+    }
 }
 
 void LLVMCodeGenerator::generateFunction(const IRFunction* ir_function) {
@@ -330,6 +443,39 @@ llvm::Value* LLVMCodeGenerator::generateBinaryOp(const IRBinaryOp* instruction) 
         return nullptr;
     }
     
+    // For Python objects, use runtime functions
+    if (instruction->getResultType() && instruction->getResultType()->getKind() == Type::Kind::ANY) {
+        switch (instruction->getOp()) {
+            case IROp::ADD:
+                return generatePythonBinaryOp(left, right, "PyNumber_Add");
+            case IROp::SUB:
+                return generatePythonBinaryOp(left, right, "PyNumber_Subtract");
+            case IROp::MUL:
+                return generatePythonBinaryOp(left, right, "PyNumber_Multiply");
+            case IROp::DIV:
+                return generatePythonBinaryOp(left, right, "PyNumber_TrueDivide");
+            case IROp::MOD:
+                return generatePythonBinaryOp(left, right, "PyNumber_Remainder");
+            case IROp::POW:
+                return generatePythonBinaryOp(left, right, "PyNumber_Power");
+            case IROp::EQ:
+                return generatePythonBinaryOp(left, right, "PyObject_RichCompare");
+            case IROp::NE:
+                return generatePythonBinaryOp(left, right, "PyObject_RichCompare");
+            case IROp::LT:
+                return generatePythonBinaryOp(left, right, "PyObject_RichCompare");
+            case IROp::LE:
+                return generatePythonBinaryOp(left, right, "PyObject_RichCompare");
+            case IROp::GT:
+                return generatePythonBinaryOp(left, right, "PyObject_RichCompare");
+            case IROp::GE:
+                return generatePythonBinaryOp(left, right, "PyObject_RichCompare");
+            default:
+                break;
+        }
+    }
+    
+    // For primitive types, use LLVM operations
     switch (instruction->getOp()) {
         case IROp::ADD:
             return builder->CreateAdd(left, right);
@@ -622,6 +768,224 @@ void IROptimizer::performCommonSubexpressionElimination(IRModule& module) {
 
 void IROptimizer::performLoopOptimizations(IRModule& module) {
     // TODO: Implement loop optimizations at IR level
+}
+
+// Enhanced Python-specific code generation methods
+llvm::Value* LLVMCodeGenerator::generatePythonBinaryOp(llvm::Value* left, llvm::Value* right, const std::string& op_name) {
+    // Increment reference counts for operands
+    generateRefCounting(left, true);
+    generateRefCounting(right, true);
+    
+    // Call runtime function
+    auto func = getOrCreateRuntimeFunction(op_name, llvm::Type::getInt8PtrTy(*context), 
+                                          {llvm::Type::getInt8PtrTy(*context), llvm::Type::getInt8PtrTy(*context)});
+    
+    llvm::Value* result = nullptr;
+    if (op_name == "PyObject_RichCompare") {
+        // For comparisons, need to pass comparison operator
+        int op_id = 0; // Py_LT
+        auto op_const = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), op_id);
+        result = builder->CreateCall(func, {left, right, op_const});
+    } else {
+        result = builder->CreateCall(func, {left, right});
+    }
+    
+    // Decrement reference counts for operands
+    generateRefCounting(left, false);
+    generateRefCounting(right, false);
+    
+    return result;
+}
+
+llvm::Value* LLVMCodeGenerator::generatePythonUnaryOp(llvm::Value* operand, const std::string& op_name) {
+    generateRefCounting(operand, true);
+    
+    auto func = getOrCreateRuntimeFunction(op_name, llvm::Type::getInt8PtrTy(*context), 
+                                          {llvm::Type::getInt8PtrTy(*context)});
+    auto result = builder->CreateCall(func, {operand});
+    
+    generateRefCounting(operand, false);
+    return result;
+}
+
+llvm::Value* LLVMCodeGenerator::generatePythonCall(llvm::Value* callee, const std::vector<llvm::Value*>& args) {
+    generateRefCounting(callee, true);
+    
+    // Increment reference counts for arguments
+    for (auto arg : args) {
+        generateRefCounting(arg, true);
+    }
+    
+    // Create argument array
+    auto args_type = llvm::ArrayType::get(llvm::Type::getInt8PtrTy(*context), args.size());
+    auto args_array = builder->CreateAlloca(args_type);
+    
+    for (size_t i = 0; i < args.size(); ++i) {
+        auto gep = builder->CreateGEP(args_array, {
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0),
+            llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), i)
+        });
+        builder->CreateStore(args[i], gep);
+    }
+    
+    auto func = getOrCreateRuntimeFunction("PyObject_Call", llvm::Type::getInt8PtrTy(*context), 
+                                          {llvm::Type::getInt8PtrTy(*context), args_type, 
+                                           llvm::Type::getInt64Ty(*context)});
+    auto result = builder->CreateCall(func, {callee, args_array, 
+                                           llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), args.size())});
+    
+    generateRefCounting(callee, false);
+    
+    // Decrement reference counts for arguments
+    for (auto arg : args) {
+        generateRefCounting(arg, false);
+    }
+    
+    return result;
+}
+
+llvm::Value* LLVMCodeGenerator::createPythonObject(llvm::Type* py_type) {
+    auto alloc_func = getOrCreateRuntimeFunction("PyObject_Malloc", llvm::Type::getInt8PtrTy(*context), 
+                                                {llvm::Type::getInt64Ty(*context)});
+    
+    auto size = module->getDataLayout().getTypeAllocSize(py_type);
+    auto size_const = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), size);
+    auto obj_ptr = builder->CreateCall(alloc_func, {size_const});
+    
+    // Initialize reference count to 1
+    auto ref_count_ptr = builder->CreateGEP(obj_ptr, {
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0),
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), 0)
+    });
+    builder->CreateStore(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 1), ref_count_ptr);
+    
+    return obj_ptr;
+}
+
+llvm::Value* LLVMCodeGenerator::createPythonInt(int64_t value) {
+    auto func = getOrCreateRuntimeFunction("PyLong_FromLong", llvm::Type::getInt8PtrTy(*context), 
+                                          {llvm::Type::getInt64Ty(*context)});
+    auto value_const = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), value);
+    return builder->CreateCall(func, {value_const});
+}
+
+llvm::Value* LLVMCodeGenerator::createPythonFloat(double value) {
+    auto func = getOrCreateRuntimeFunction("PyFloat_FromDouble", llvm::Type::getInt8PtrTy(*context), 
+                                          {llvm::Type::getDoubleTy(*context)});
+    auto value_const = llvm::ConstantFP::get(llvm::Type::getDoubleTy(*context), value);
+    return builder->CreateCall(func, {value_const});
+}
+
+llvm::Value* LLVMCodeGenerator::createPythonString(const std::string& str) {
+    auto func = getOrCreateRuntimeFunction("PyUnicode_FromString", llvm::Type::getInt8PtrTy(*context), 
+                                          {llvm::Type::getInt8PtrTy(*context)});
+    auto str_const = builder->CreateGlobalStringPtr(str);
+    return builder->CreateCall(func, {str_const});
+}
+
+llvm::Value* LLVMCodeGenerator::createPythonList(const std::vector<llvm::Value*>& elements) {
+    auto func = getOrCreateRuntimeFunction("PyList_New", llvm::Type::getInt8PtrTy(*context), 
+                                          {llvm::Type::getInt64Ty(*context)});
+    
+    auto size_const = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), elements.size());
+    auto list_obj = builder->CreateCall(func, {size_const});
+    
+    // Set list elements
+    for (size_t i = 0; i < elements.size(); ++i) {
+        auto set_func = getOrCreateRuntimeFunction("PyList_SetItem", llvm::Type::getInt32Ty(*context), 
+                                                  {llvm::Type::getInt8PtrTy(*context), 
+                                                   llvm::Type::getInt64Ty(*context), 
+                                                   llvm::Type::getInt8PtrTy(*context)});
+        auto index_const = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), i);
+        builder->CreateCall(set_func, {list_obj, index_const, elements[i]});
+    }
+    
+    return list_obj;
+}
+
+void LLVMCodeGenerator::generateRefCounting(llvm::Value* obj, bool increment) {
+    if (!obj) return;
+    
+    auto func_name = increment ? "Py_IncRef" : "Py_DecRef";
+    auto func = getOrCreateRuntimeFunction(func_name, llvm::Type::getVoidTy(*context), 
+                                          {llvm::Type::getInt8PtrTy(*context)});
+    builder->CreateCall(func, {obj});
+}
+
+bool LLVMCodeGenerator::generateNativeExecutable(const std::string& output_path) {
+    // Generate object file first
+    std::string obj_file = output_path + ".o";
+    if (!writeToObjectFile(obj_file)) {
+        return false;
+    }
+    
+    // Link with Python runtime
+    std::string link_command = "clang++ -o " + output_path + " " + obj_file + 
+                              " -lpython3.10 -lpthread -ldl -lutil";
+    
+    int result = std::system(link_command.c_str());
+    return result == 0;
+}
+
+bool LLVMCodeGenerator::generateSharedLibrary(const std::string& output_path) {
+    // Generate object file first
+    std::string obj_file = output_path + ".o";
+    if (!writeToObjectFile(obj_file)) {
+        return false;
+    }
+    
+    // Create shared library
+    std::string link_command = "clang++ -shared -o " + output_path + " " + obj_file + 
+                              " -lpython3.10";
+    
+    int result = std::system(link_command.c_str());
+    return result == 0;
+}
+
+bool LLVMCodeGenerator::setTargetTriple(const std::string& triple) {
+    if (module) {
+        module->setTargetTriple(triple);
+    }
+    
+    // Update target machine
+    std::string error;
+    auto target = llvm::TargetRegistry::lookupTarget(triple, error);
+    if (!target) {
+        return false;
+    }
+    
+    auto cpu = "generic";
+    auto features = "";
+    llvm::TargetOptions opt;
+    auto rm = llvm::Optional<llvm::Reloc::Model>();
+    target_machine = target->createTargetMachine(triple, cpu, features, opt, rm);
+    
+    return target_machine != nullptr;
+}
+
+bool LLVMCodeGenerator::enableVectorization() {
+    // Add vectorization passes
+    llvm::PassBuilder pb;
+    llvm::LoopAnalysisManager lam;
+    llvm::FunctionAnalysisManager fam;
+    llvm::CGSCCAnalysisManager cgam;
+    llvm::ModuleAnalysisManager mam;
+    
+    pb.registerModuleAnalyses(mam);
+    pb.registerCGSCCAnalyses(cgam);
+    pb.registerFunctionAnalyses(fam);
+    pb.registerLoopAnalyses(lam);
+    pb.crossRegisterProxies(lam, fam, cgam, mam);
+    
+    llvm::ModulePassManager mpm;
+    mpm.addPass(llvm::LoopVectorizePass());
+    mpm.addPass(llvm::SLPVectorizerPass());
+    
+    if (module) {
+        mpm.run(*module, mam);
+    }
+    
+    return true;
 }
 
 } // namespace pyplusplus

@@ -4,6 +4,7 @@
 #include "ir.h"
 #include "codegen.h"
 #include "runtime.h"
+#include "bytecode.h"
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -23,14 +24,23 @@ private:
     bool verbose = false;
     bool emit_llvm = false;
     bool emit_ir = false;
+    bool aot_mode = false;
+    bool bytecode_mode = false;
     
-    // Compilation pipeline
+    // Compilation pipelines
+    std::unique_ptr<AOTCompilationPipeline> aot_pipeline;
+    
+    // Traditional compilation pipeline
     std::string readSourceFile(const std::string& filename);
     std::unique_ptr<Module> parseSource(const std::string& source);
     bool performTypeInference(Module& module);
     std::unique_ptr<IRModule> generateIR(Module& module);
     bool generateCode(IRModule& ir_module);
     bool linkExecutable();
+    
+    // AOT compilation
+    bool compileAOT();
+    bool compileBytecode();
     
     // Error reporting
     void reportError(const std::string& error);
@@ -39,6 +49,7 @@ private:
 public:
     Compiler() {
         Runtime::initialize();
+        aot_pipeline = std::make_unique<AOTCompilationPipeline>();
     }
     
     ~Compiler() {
@@ -55,6 +66,8 @@ public:
     void setVerbose(bool verbose) { this->verbose = verbose; }
     void setEmitLLVM(bool emit) { emit_llvm = emit; }
     void setEmitIR(bool emit) { emit_ir = emit; }
+    void setAOTMode(bool aot) { aot_mode = aot; }
+    void setBytecodeMode(bool bytecode) { bytecode_mode = bytecode; }
 };
 
 std::string Compiler::readSourceFile(const std::string& filename) {
@@ -270,6 +283,35 @@ void Compiler::reportWarning(const std::string& warning) {
     std::cerr << "Warning: " << warning << std::endl;
 }
 
+bool Compiler::compileAOT() {
+    if (verbose) {
+        std::cout << "Starting AOT compilation..." << std::endl;
+    }
+    
+    // Configure AOT pipeline
+    aot_pipeline->setOptimizationLevel(optimization_level);
+    aot_pipeline->setDebugMode(debug_mode);
+    aot_pipeline->setVerbose(verbose);
+    
+    // Run AOT compilation
+    bool success = aot_pipeline->compile(input_file, output_file);
+    
+    if (success && verbose) {
+        std::cout << "AOT compilation completed successfully!" << std::endl;
+    }
+    
+    return success;
+}
+
+bool Compiler::compileBytecode() {
+    if (verbose) {
+        std::cout << "Starting bytecode compilation..." << std::endl;
+    }
+    
+    // For now, delegate to AOT pipeline
+    return compileAOT();
+}
+
 bool Compiler::compile(int argc, char* argv[]) {
     // Parse command line arguments
     static struct option long_options[] = {
@@ -279,6 +321,8 @@ bool Compiler::compile(int argc, char* argv[]) {
         {"verbose", no_argument, 0, 'v'},
         {"emit-llvm", no_argument, 0, 'S'},
         {"emit-ir", no_argument, 0, 'I'},
+        {"aot", no_argument, 0, 'a'},
+        {"bytecode", no_argument, 0, 'b'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -286,7 +330,7 @@ bool Compiler::compile(int argc, char* argv[]) {
     int option_index = 0;
     int c;
     
-    while ((c = getopt_long(argc, argv, "o:O:gvSIh", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "o:O:gvSIabh", long_options, &option_index)) != -1) {
         switch (c) {
             case 'o':
                 output_file = optarg;
@@ -310,6 +354,12 @@ bool Compiler::compile(int argc, char* argv[]) {
             case 'I':
                 emit_ir = true;
                 break;
+            case 'a':
+                aot_mode = true;
+                break;
+            case 'b':
+                bytecode_mode = true;
+                break;
             case 'h':
                 std::cout << "Python++ Compiler\n"
                           << "Usage: py++c [options] <input_file>\n\n"
@@ -320,6 +370,8 @@ bool Compiler::compile(int argc, char* argv[]) {
                           << "  -v            Verbose output\n"
                           << "  -S            Emit LLVM IR\n"
                           << "  -I            Emit intermediate representation\n"
+                          << "  -a            Enable AOT compilation mode\n"
+                          << "  -b            Enable bytecode compilation mode\n"
                           << "  -h            Show this help message\n";
                 return true;
             case '?':
@@ -352,39 +404,44 @@ bool Compiler::compile(int argc, char* argv[]) {
         std::cout << "Debug mode: " << (debug_mode ? "enabled" : "disabled") << std::endl;
     }
     
-    // Compilation pipeline
-    std::string source = readSourceFile(input_file);
-    if (source.empty()) {
-        return false;
+    // Choose compilation pipeline
+    if (aot_mode || bytecode_mode) {
+        return compileAOT();
+    } else {
+        // Traditional compilation pipeline
+        std::string source = readSourceFile(input_file);
+        if (source.empty()) {
+            return false;
+        }
+        
+        auto module = parseSource(source);
+        if (!module) {
+            return false;
+        }
+        
+        if (!performTypeInference(*module)) {
+            return false;
+        }
+        
+        auto ir_module = generateIR(*module);
+        if (!ir_module) {
+            return false;
+        }
+        
+        if (!generateCode(*ir_module)) {
+            return false;
+        }
+        
+        if (!linkExecutable()) {
+            return false;
+        }
+        
+        if (verbose) {
+            std::cout << "Compilation completed successfully!" << std::endl;
+        }
+        
+        return true;
     }
-    
-    auto module = parseSource(source);
-    if (!module) {
-        return false;
-    }
-    
-    if (!performTypeInference(*module)) {
-        return false;
-    }
-    
-    auto ir_module = generateIR(*module);
-    if (!ir_module) {
-        return false;
-    }
-    
-    if (!generateCode(*ir_module)) {
-        return false;
-    }
-    
-    if (!linkExecutable()) {
-        return false;
-    }
-    
-    if (verbose) {
-        std::cout << "Compilation completed successfully!" << std::endl;
-    }
-    
-    return true;
 }
 
 } // namespace pyplusplus
