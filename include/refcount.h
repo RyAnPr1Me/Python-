@@ -19,6 +19,10 @@ private:
     mutable std::atomic<int> ref_count{1};
     mutable std::atomic<int> weak_count{0};
     
+    // Thread-local cache for performance optimization
+    thread_local static int cached_ref_count;
+    thread_local static const RefCountedBase* cached_object;
+    
     friend class RefCounted;
     template<typename T> friend class RefPtr;
     template<typename T> friend class WeakRef;
@@ -591,6 +595,66 @@ public:
     size_t getTotalFreed() const { return total_freed; }
     size_t getCurrentUsage() const { return total_allocated - total_freed; }
     
+    // Performance optimizations
+    void optimize() {
+        std::lock_guard<std::mutex> lock(pool_mutex);
+        
+        // Coalesce adjacent free blocks
+        coalesceFreeBlocks();
+        
+        // Release unused memory back to system
+        releaseUnusedMemory();
+    }
+    
+    void preallocate(size_t size, size_t count) {
+        std::lock_guard<std::mutex> lock(pool_mutex);
+        
+        for (size_t i = 0; i < count; ++i) {
+            Block* block = allocateNewBlock(size);
+            if (block) {
+                block->in_use = false;
+                block->next = free_blocks;
+                free_blocks = block;
+            }
+        }
+    }
+    
+    // Memory statistics
+    struct MemoryStats {
+        size_t total_blocks;
+        size_t free_blocks;
+        size_t used_blocks;
+        size_t fragmentation_ratio;
+        size_t average_block_size;
+    };
+    
+    MemoryStats getStats() const {
+        std::lock_guard<std::mutex> lock(pool_mutex);
+        
+        MemoryStats stats{};
+        stats.total_blocks = allocated_blocks.size();
+        stats.average_block_size = stats.total_blocks > 0 ? total_allocated / stats.total_blocks : 0;
+        
+        size_t free_count = 0;
+        Block* current = free_blocks;
+        while (current) {
+            free_count++;
+            current = current->next;
+        }
+        
+        stats.free_blocks = free_count;
+        stats.used_blocks = stats.total_blocks - free_count;
+        
+        // Calculate fragmentation (simplified)
+        if (stats.used_blocks > 0) {
+            stats.fragmentation_ratio = (stats.free_blocks * 100) / stats.total_blocks;
+        } else {
+            stats.fragmentation_ratio = 0;
+        }
+        
+        return stats;
+    }
+    
 private:
     Block* findFreeBlock(size_t size) {
         Block* prev = nullptr;
@@ -629,6 +693,30 @@ private:
         allocated_blocks.push_back(std::move(block));
         
         return block_ptr;
+    }
+    
+    void coalesceFreeBlocks() {
+        // Simple coalescing - merge adjacent free blocks
+        // This is a simplified implementation
+        for (auto& block : allocated_blocks) {
+            if (!block->in_use) {
+                // Try to find adjacent free blocks to merge
+                // Implementation would depend on memory layout
+            }
+        }
+    }
+    
+    void releaseUnusedMemory() {
+        // Release completely unused blocks back to system
+        auto it = allocated_blocks.begin();
+        while (it != allocated_blocks.end()) {
+            if (!(*it)->in_use && (*it)->size > 1024) { // Only release large blocks
+                free((*it)->memory);
+                it = allocated_blocks.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 };
 

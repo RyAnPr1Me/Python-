@@ -641,14 +641,17 @@ private:
     std::string name;
     std::vector<std::unique_ptr<Expression>> base_classes;
     std::vector<std::pair<std::string, std::unique_ptr<Expression>>> decorators;
+    std::unique_ptr<Expression> metaclass;
     std::vector<std::unique_ptr<Statement>> body;
 
 public:
     ClassDef(const std::string& name, 
              std::vector<std::unique_ptr<Expression>> base_classes,
              std::vector<std::pair<std::string, std::unique_ptr<Expression>>> decorators,
+             std::unique_ptr<Expression> metaclass,
              std::vector<std::unique_ptr<Statement>> body)
-        : name(name), base_classes(std::move(base_classes)), decorators(std::move(decorators)), body(std::move(body)) {}
+        : name(name), base_classes(std::move(base_classes)), decorators(std::move(decorators)), 
+          metaclass(std::move(metaclass)), body(std::move(body)) {}
     
     void accept(ASTVisitor& visitor) override;
     int getLine() const override { return 0; } // TODO: Store line info
@@ -657,6 +660,7 @@ public:
     const std::string& getName() const { return name; }
     const std::vector<std::unique_ptr<Expression>>& getBaseClasses() const { return base_classes; }
     const std::vector<std::pair<std::string, std::unique_ptr<Expression>>>& getDecorators() const { return decorators; }
+    Expression* getMetaclass() const { return metaclass.get(); }
     const std::vector<std::unique_ptr<Statement>>& getBody() const { return body; }
 };
 
@@ -894,6 +898,178 @@ public:
     const std::vector<std::pair<std::string, std::string>>& getNames() const { return names; }
 };
 
+// Pattern matching (Python 3.10+)
+class MatchStatement : public Statement {
+private:
+    std::unique_ptr<Expression> subject;
+    std::vector<std::unique_ptr<std::pair<std::unique_ptr<Expression>, std::vector<std::unique_ptr<Statement>>>>> cases;
+    int line;
+    int column;
+
+public:
+    MatchStatement(std::unique_ptr<Expression> subject,
+                   std::vector<std::unique_ptr<std::pair<std::unique_ptr<Expression>, std::vector<std::unique_ptr<Statement>>>>> cases,
+                   int line, int column)
+        : subject(std::move(subject)), cases(std::move(cases)), line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    Expression* getSubject() const { return subject.get(); }
+    const std::vector<std::unique_ptr<std::pair<std::unique_ptr<Expression>, std::vector<std::unique_ptr<Statement>>>>>& getCases() const { return cases; }
+};
+
+// Pattern expressions for pattern matching
+class MatchValue : public Expression {
+private:
+    std::unique_ptr<Expression> value;
+    int line;
+    int column;
+
+public:
+    MatchValue(std::unique_ptr<Expression> value, int line, int column)
+        : value(std::move(value)), line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    Expression* getValue() const { return value.get(); }
+};
+
+class MatchSingleton : public Expression {
+private:
+    std::unique_ptr<Expression> value;
+    int line;
+    int column;
+
+public:
+    MatchSingleton(std::unique_ptr<Expression> value, int line, int column)
+        : value(std::move(value)), line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    Expression* getValue() const { return value.get(); }
+};
+
+class MatchSequence : public Expression {
+private:
+    std::vector<std::unique_ptr<Expression>> patterns;
+    int line;
+    int column;
+
+public:
+    MatchSequence(std::vector<std::unique_ptr<Expression>> patterns, int line, int column)
+        : patterns(std::move(patterns)), line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    const std::vector<std::unique_ptr<Expression>>& getPatterns() const { return patterns; }
+};
+
+class MatchMapping : public Expression {
+private:
+    std::vector<std::pair<std::unique_ptr<Expression>, std::unique_ptr<Expression>>> patterns;
+    std::unique_ptr<Expression> rest;
+    int line;
+    int column;
+
+public:
+    MatchMapping(std::vector<std::pair<std::unique_ptr<Expression>, std::unique_ptr<Expression>>> patterns,
+                 std::unique_ptr<Expression> rest, int line, int column)
+        : patterns(std::move(patterns)), rest(std::move(rest)), line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    const std::vector<std::pair<std::unique_ptr<Expression>, std::unique_ptr<Expression>>>& getPatterns() const { return patterns; }
+    Expression* getRest() const { return rest.get(); }
+};
+
+class MatchClass : public Expression {
+private:
+    std::unique_ptr<Expression> cls;
+    std::vector<std::unique_ptr<Expression>> patterns;
+    std::vector<std::pair<std::string, std::unique_ptr<Expression>>> kwd_patterns;
+    int line;
+    int column;
+
+public:
+    MatchClass(std::unique_ptr<Expression> cls,
+               std::vector<std::unique_ptr<Expression>> patterns,
+               std::vector<std::pair<std::string, std::unique_ptr<Expression>>> kwd_patterns,
+               int line, int column)
+        : cls(std::move(cls)), patterns(std::move(patterns)), kwd_patterns(std::move(kwd_patterns)), 
+          line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    Expression* getClass() const { return cls.get(); }
+    const std::vector<std::unique_ptr<Expression>>& getPatterns() const { return patterns; }
+    const std::vector<std::pair<std::string, std::unique_ptr<Expression>>>& getKwdPatterns() const { return kwd_patterns; }
+};
+
+class MatchStar : public Expression {
+private:
+    std::string name;
+    int line;
+    int column;
+
+public:
+    MatchStar(const std::string& name, int line, int column)
+        : name(name), line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    const std::string& getName() const { return name; }
+};
+
+class MatchAs : public Expression {
+private:
+    std::unique_ptr<Expression> pattern;
+    std::string name;
+    int line;
+    int column;
+
+public:
+    MatchAs(std::unique_ptr<Expression> pattern, const std::string& name, int line, int column)
+        : pattern(std::move(pattern)), name(name), line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    Expression* getPattern() const { return pattern.get(); }
+    const std::string& getName() const { return name; }
+};
+
+class MatchOr : public Expression {
+private:
+    std::vector<std::unique_ptr<Expression>> patterns;
+    int line;
+    int column;
+
+public:
+    MatchOr(std::vector<std::unique_ptr<Expression>> patterns, int line, int column)
+        : patterns(std::move(patterns)), line(line), column(column) {}
+    
+    void accept(ASTVisitor& visitor) override;
+    int getLine() const override { return line; }
+    int getColumn() const override { return column; }
+    
+    const std::vector<std::unique_ptr<Expression>>& getPatterns() const { return patterns; }
+};
+
 // Module class
 class Module {
 private:
@@ -960,6 +1136,17 @@ public:
     virtual void visit(NonlocalStatement& stmt) = 0;
     virtual void visit(ImportStatement& stmt) = 0;
     virtual void visit(ImportFromStatement& stmt) = 0;
+    virtual void visit(MatchStatement& stmt) = 0;
+    
+    // Pattern matching expressions
+    virtual void visit(MatchValue& expr) = 0;
+    virtual void visit(MatchSingleton& expr) = 0;
+    virtual void visit(MatchSequence& expr) = 0;
+    virtual void visit(MatchMapping& expr) = 0;
+    virtual void visit(MatchClass& expr) = 0;
+    virtual void visit(MatchStar& expr) = 0;
+    virtual void visit(MatchAs& expr) = 0;
+    virtual void visit(MatchOr& expr) = 0;
 };
 
 } // namespace pyplusplus
