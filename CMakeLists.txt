@@ -50,21 +50,29 @@ target_include_directories(py++c PRIVATE include)
 # Link LLVM libraries
 target_link_libraries(py++c ${llvm_libs})
 
-# Runtime library
-add_library(py++-runtime STATIC
-    runtime/object.cpp
-    runtime/memory.cpp
-    runtime/exceptions.cpp
-    runtime/builtins.cpp
-)
+# Runtime library (conditionally built if runtime directory exists)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+    add_library(py++-runtime STATIC
+        runtime/object.cpp
+        runtime/memory.cpp
+        runtime/exceptions.cpp
+        runtime/builtins.cpp
+    )
+    target_include_directories(py++-runtime PUBLIC include)
+    install(TARGETS py++-runtime DESTINATION lib)
+endif()
 
-target_include_directories(py++-runtime PUBLIC include)
-
-# Tests
-enable_testing()
-add_subdirectory(tests)
+# Tests (optional - only if GTest is available and BUILD_TESTING is ON)
+if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+    find_package(GTest QUIET)
+    if(GTest_FOUND)
+        enable_testing()
+        add_subdirectory(tests)
+    else()
+        message(STATUS "GTest not found, skipping tests")
+    endif()
+endif()
 
 # Installation
 install(TARGETS py++c p++ DESTINATION bin)
-install(TARGETS py++-runtime DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
