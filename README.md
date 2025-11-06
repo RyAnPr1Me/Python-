@@ -30,11 +30,45 @@ cmake ..
 make -j$(nproc)
 ```
 
+## Installation
+
+### Windows
+
+Download the latest Windows binary release from the [Releases](../../releases) page.
+
+1. Extract the ZIP archive
+2. Run `setup.bat` to add Python++ to your PATH
+3. Restart your terminal
+
+To associate `.py+` files with Python++, run as administrator:
+```cmd
+assoc .py+=PythonPlusPlus
+ftype PythonPlusPlus="C:\path\to\p++.exe" "%1" %*
+```
+
+### From Source
+
+See [Building](#building) section below.
+
 ## Usage
+
+### Quick Run (like `python` command)
+
+```bash
+# Run a Python++ script directly
+p++ hello.py+
+p++ script.py
+
+# Pass arguments to your script
+p++ myprogram.py+ arg1 arg2
+```
+
+### Compile to Executable
 
 ```bash
 # Compile a Python file
 py++c hello.py -o hello
+py++c hello.py+ -o hello
 
 # Run with optimizations
 py++c --optimize=3 compute.py -o compute
@@ -43,10 +77,32 @@ py++c --optimize=3 compute.py -o compute
 py++c --debug script.py -o script
 ```
 
-## Example
+### File Extensions
+
+Python++ supports both `.py` and `.py+` file extensions:
+- `.py` - Compatible with standard Python files
+- `.py+` - Recommended for Python++ specific files
+
+## Examples
+
+### Quick Run Example
 
 ```python
-# hello.py
+# hello.py+
+def greet(name):
+    return f"Hello, {name}!"
+
+print(greet("World"))
+```
+
+```bash
+p++ hello.py+  # Compiles and runs immediately
+```
+
+### Compilation Example
+
+```python
+# fibonacci.py+
 def fibonacci(n):
     if n <= 1:
         return n
@@ -56,8 +112,8 @@ print(fibonacci(10))
 ```
 
 ```bash
-py++c hello.py -o hello
-./hello  # Outputs: 55
+py++c fibonacci.py+ -o fibonacci
+./fibonacci  # Outputs: 55
 ```
 
 ## Performance

@@ -25,11 +25,12 @@ llvm_map_components_to_libnames(llvm_libs
     object
 )
 
-# Source files
+# Source files (exclude runner.cpp)
 file(GLOB_RECURSE SOURCES 
     "src/*.cpp"
     "src/*.c"
 )
+list(FILTER SOURCES EXCLUDE REGEX ".*runner\\.cpp$")
 
 # Header files
 file(GLOB_RECURSE HEADERS
@@ -39,6 +40,9 @@ file(GLOB_RECURSE HEADERS
 
 # Compiler executable
 add_executable(py++c ${SOURCES} ${HEADERS})
+
+# Runner executable (p++)
+add_executable(p++ src/runner.cpp)
 
 # Include directories
 target_include_directories(py++c PRIVATE include)
@@ -61,6 +65,6 @@ enable_testing()
 add_subdirectory(tests)
 
 # Installation
-install(TARGETS py++c DESTINATION bin)
+install(TARGETS py++c p++ DESTINATION bin)
 install(TARGETS py++-runtime DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
