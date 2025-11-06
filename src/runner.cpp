@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -16,24 +17,58 @@
 
 namespace fs = std::filesystem;
 
+// Escape special characters for shell commands
+std::string escapeShellArg(const std::string& arg) {
+#ifdef _WIN32
+    // Windows: escape quotes and backslashes
+    std::string escaped;
+    for (char c : arg) {
+        if (c == '"' || c == '\\') {
+            escaped += '\\';
+        }
+        escaped += c;
+    }
+    return "\"" + escaped + "\"";
+#else
+    // Unix: use single quotes and escape single quotes within
+    std::string escaped;
+    for (char c : arg) {
+        if (c == '\'') {
+            escaped += "'\\''";
+        } else {
+            escaped += c;
+        }
+    }
+    return "'" + escaped + "'";
+#endif
+}
+
 // Get the directory of the current executable
 std::string getExecutableDir() {
 #ifdef _WIN32
     char path[MAX_PATH];
-    GetModuleFileNameA(NULL, path, MAX_PATH);
+    DWORD result = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (result == 0 || result == MAX_PATH) {
+        std::cerr << "Error: Failed to get executable path" << std::endl;
+        return ".";
+    }
     std::string fullPath(path);
     size_t pos = fullPath.find_last_of("\\/");
     return fullPath.substr(0, pos);
 #else
-    char path[1024];
+    char path[4096];  // Increased buffer size
     ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
-    if (len != -1) {
-        path[len] = '\0';
-        std::string fullPath(path);
-        size_t pos = fullPath.find_last_of("/");
-        return fullPath.substr(0, pos);
+    if (len == -1) {
+        std::cerr << "Warning: Failed to read executable path, using current directory" << std::endl;
+        return ".";
     }
-    return ".";
+    if (len >= static_cast<ssize_t>(sizeof(path) - 1)) {
+        std::cerr << "Warning: Executable path may be truncated" << std::endl;
+    }
+    path[len] = '\0';
+    std::string fullPath(path);
+    size_t pos = fullPath.find_last_of("/");
+    return fullPath.substr(0, pos);
 #endif
 }
 
@@ -71,8 +106,8 @@ int compileAndRun(const std::string& sourceFile, const std::vector<std::string>&
     tempOutput = "/tmp/py++_temp_" + std::to_string(getpid());
 #endif
 
-    // Build compile command
-    std::string compileCmd = "\"" + compiler + "\" \"" + sourceFile + "\" -o \"" + tempOutput + "\"";
+    // Build compile command with proper escaping
+    std::string compileCmd = escapeShellArg(compiler) + " " + escapeShellArg(sourceFile) + " -o " + escapeShellArg(tempOutput);
     
     // Compile the source file
     int compileResult = system(compileCmd.c_str());
@@ -81,10 +116,10 @@ int compileAndRun(const std::string& sourceFile, const std::vector<std::string>&
         return compileResult;
     }
 
-    // Build run command
-    std::string runCmd = "\"" + tempOutput + "\"";
+    // Build run command with proper escaping
+    std::string runCmd = escapeShellArg(tempOutput);
     for (const auto& arg : args) {
-        runCmd += " \"" + arg + "\"";
+        runCmd += " " + escapeShellArg(arg);
     }
 
     // Run the compiled program
@@ -92,9 +127,12 @@ int compileAndRun(const std::string& sourceFile, const std::vector<std::string>&
 
     // Clean up temporary file
     try {
-        fs::remove(tempOutput);
-    } catch (...) {
-        // Ignore cleanup errors
+        if (fs::exists(tempOutput)) {
+            fs::remove(tempOutput);
+        }
+    } catch (const fs::filesystem_error& e) {
+        // Log but don't fail on cleanup errors
+        std::cerr << "Warning: Failed to remove temporary file: " << e.what() << std::endl;
     }
 
     return runResult;
