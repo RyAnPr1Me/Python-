@@ -1080,8 +1080,10 @@ RefPtr<RefCountedMap> StdLibModules::getJSONModule() {
             
             double float_val = std::stod(json_str, &pos);
             if (pos == json_str.length()) return Value(float_val);
-        } catch (...) {
+        } catch (const std::invalid_argument&) {
             // Not a number
+        } catch (const std::out_of_range&) {
+            // Number out of range
         }
         
         // Try to parse as string
