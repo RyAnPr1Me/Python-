@@ -44,6 +44,11 @@ add_executable(py++c ${SOURCES} ${HEADERS})
 # Runner executable (p++)
 add_executable(p++ src/runner.cpp)
 
+# Link Windows libraries for p++ runner (needed for admin checks)
+if(WIN32)
+    target_link_libraries(p++ advapi32)
+endif()
+
 # Include directories
 target_include_directories(py++c PRIVATE include)
 

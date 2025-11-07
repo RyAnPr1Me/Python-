@@ -199,20 +199,33 @@ int installFileAssociations() {
     
     std::cout << "Installing Python++ file associations...\n";
     
+    // Escape the executable path for use in shell command
+    std::string escapedPath;
+    for (char c : exePath) {
+        if (c == '"') {
+            escapedPath += "\\\"";
+        } else if (c == '\\') {
+            escapedPath += "\\\\";
+        } else {
+            escapedPath += c;
+        }
+    }
+    
     // Create file association for .py+ extension
     std::string assocCmd = "assoc .py+=PythonPlusPlus";
     std::cout << "Running: " << assocCmd << "\n";
     int result = system(assocCmd.c_str());
     if (result != 0) {
-        std::cerr << "Warning: Failed to associate .py+ extension\n";
+        std::cerr << "Error: Failed to associate .py+ extension\n";
+        return 1;
     }
     
     // Set the file type command
-    std::string ftypeCmd = "ftype PythonPlusPlus=\"" + exePath + "\" \"%1\" %*";
+    std::string ftypeCmd = "ftype PythonPlusPlus=\"" + escapedPath + "\" \"%1\" %*";
     std::cout << "Running: " << ftypeCmd << "\n";
     result = system(ftypeCmd.c_str());
     if (result != 0) {
-        std::cerr << "Warning: Failed to set file type handler\n";
+        std::cerr << "Error: Failed to set file type handler\n";
         return 1;
     }
     
