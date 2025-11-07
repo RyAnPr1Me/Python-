@@ -115,8 +115,10 @@ jobs:
         echo Please restart your terminal for PATH changes to take effect.
         echo.
         echo Usage:
-        echo   p++ script.py+    - Compile and run a Python++ script
-        echo   py++c script.py+  - Compile a Python++ script to executable
+        echo   p++ script.py+       - Compile and run a Python++ script
+        echo   py++c script.py+     - Compile a Python++ script to executable
+        echo   p++ --install        - Install file associations (requires admin)
+        echo   p++ --uninstall      - Remove file associations (requires admin)
         echo.
         echo Setup complete!
         pause
@@ -160,9 +162,23 @@ jobs:
         py++c script.py+ -o myprogram
         ```
         
-        ## Manual File Association (if needed)
+        ## Alternative Installation Methods
         
-        If you didn't run setup.bat as administrator, you can manually associate files:
+        ### Method 1: Using p++ --install
+        
+        After adding the `bin` directory to your PATH, you can run:
+        ```
+        p++ --install
+        ```
+        
+        This will configure file associations for .py+ files. Must be run from an Administrator command prompt.
+        
+        To remove file associations later:
+        ```
+        p++ --uninstall
+        ```
+        
+        ### Method 2: Manual File Association
         
         1. Right-click on a .py+ file
         2. Select "Open with" -> "Choose another app"
@@ -170,7 +186,9 @@ jobs:
         4. Navigate to the bin folder and select p++.exe
         5. Check "Always use this app to open .py+ files"
         
-        Or run these commands in an administrator command prompt:
+        ### Method 3: Command Line
+        
+        Run these commands in an administrator command prompt:
         ```
         assoc .py+=PythonPlusPlus
         ftype PythonPlusPlus="<path-to-extracted-folder>\bin\p++.exe" "%1" %*

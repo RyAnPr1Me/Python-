@@ -47,6 +47,12 @@ After installation, you can:
 - Run Python++ scripts from the command line: `p++ script.py+`
 - Double-click `.py+` files to execute them directly!
 
+**Alternative:** You can also manually configure file associations using:
+```cmd
+p++ --install
+```
+(Must be run from an Administrator command prompt)
+
 ### From Source
 
 See [Building](#building) section below.

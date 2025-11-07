@@ -146,14 +146,107 @@ void printUsage() {
     std::cout << "Compiles and runs a Python++ source file.\n";
     std::cout << "\n";
     std::cout << "Options:\n";
-    std::cout << "  -h, --help     Show this help message\n";
-    std::cout << "  -v, --version  Show version information\n";
+    std::cout << "  -h, --help        Show this help message\n";
+    std::cout << "  -v, --version     Show version information\n";
+    std::cout << "  --install         Install file associations for .py+ files (Windows only, requires admin)\n";
+    std::cout << "  --uninstall       Remove file associations for .py+ files (Windows only, requires admin)\n";
 }
 
 void printVersion() {
     std::cout << "Python++ Runner v1.0.0\n";
     std::cout << "An AOT-compiled Python language with 100% Python syntax compatibility\n";
 }
+
+#ifdef _WIN32
+// Check if running with administrator privileges on Windows
+bool isRunningAsAdmin() {
+    BOOL isAdmin = FALSE;
+    PSID adminGroup = NULL;
+    SID_IDENTIFIER_AUTHORITY ntAuthority = SECURITY_NT_AUTHORITY;
+    
+    if (AllocateAndInitializeSid(&ntAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+                                  DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &adminGroup)) {
+        CheckTokenMembership(NULL, adminGroup, &isAdmin);
+        FreeSid(adminGroup);
+    }
+    
+    return isAdmin == TRUE;
+}
+
+// Get the full path to the current executable
+std::string getExecutablePath() {
+    char path[MAX_PATH];
+    DWORD result = GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (result == 0 || result == MAX_PATH) {
+        return "";
+    }
+    return std::string(path);
+}
+
+// Install file associations on Windows
+int installFileAssociations() {
+    if (!isRunningAsAdmin()) {
+        std::cerr << "Error: Administrator privileges required for installation.\n";
+        std::cerr << "Please run this command from an Administrator command prompt.\n";
+        return 1;
+    }
+    
+    std::string exePath = getExecutablePath();
+    if (exePath.empty()) {
+        std::cerr << "Error: Failed to get executable path\n";
+        return 1;
+    }
+    
+    std::cout << "Installing Python++ file associations...\n";
+    
+    // Create file association for .py+ extension
+    std::string assocCmd = "assoc .py+=PythonPlusPlus";
+    std::cout << "Running: " << assocCmd << "\n";
+    int result = system(assocCmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to associate .py+ extension\n";
+    }
+    
+    // Set the file type command
+    std::string ftypeCmd = "ftype PythonPlusPlus=\"" + exePath + "\" \"%1\" %*";
+    std::cout << "Running: " << ftypeCmd << "\n";
+    result = system(ftypeCmd.c_str());
+    if (result != 0) {
+        std::cerr << "Warning: Failed to set file type handler\n";
+        return 1;
+    }
+    
+    std::cout << "\nFile associations installed successfully!\n";
+    std::cout << "You can now double-click .py+ files to run them.\n";
+    
+    return 0;
+}
+
+// Uninstall file associations on Windows
+int uninstallFileAssociations() {
+    if (!isRunningAsAdmin()) {
+        std::cerr << "Error: Administrator privileges required for uninstallation.\n";
+        std::cerr << "Please run this command from an Administrator command prompt.\n";
+        return 1;
+    }
+    
+    std::cout << "Removing Python++ file associations...\n";
+    
+    // Remove file type handler
+    std::string ftypeCmd = "ftype PythonPlusPlus=";
+    std::cout << "Running: " << ftypeCmd << "\n";
+    system(ftypeCmd.c_str());
+    
+    // Remove file association
+    std::string assocCmd = "assoc .py+=";
+    std::cout << "Running: " << assocCmd << "\n";
+    system(assocCmd.c_str());
+    
+    std::cout << "\nFile associations removed successfully!\n";
+    
+    return 0;
+}
+#endif
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -172,6 +265,21 @@ int main(int argc, char* argv[]) {
         printVersion();
         return 0;
     }
+    
+#ifdef _WIN32
+    if (firstArg == "--install") {
+        return installFileAssociations();
+    }
+    
+    if (firstArg == "--uninstall") {
+        return uninstallFileAssociations();
+    }
+#else
+    if (firstArg == "--install" || firstArg == "--uninstall") {
+        std::cerr << "Error: File association management is only supported on Windows\n";
+        return 1;
+    }
+#endif
 
     // Check if the source file exists
     std::string sourceFile = firstArg;
