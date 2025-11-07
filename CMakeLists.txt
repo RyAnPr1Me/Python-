@@ -51,12 +51,38 @@ include_directories(${PYTHON3_INCLUDE_DIRS})
 link_directories(${LLVM_LIBRARY_DIR})
 link_directories(${PYTHON3_LIBRARY_DIRS})
 
-# Source files (exclude runner.cpp)
+# Source files (exclude runner.cpp and main.cpp)
 file(GLOB_RECURSE SOURCES 
     "src/*.cpp"
     "src/*.c"
 )
 list(FILTER SOURCES EXCLUDE REGEX ".*runner\\.cpp$")
+list(FILTER SOURCES EXCLUDE REGEX ".*main\\.cpp$")
+
+# Separate core and AOT source files
+set(PYPP_CORE_SOURCES
+    src/lexer.cpp
+    src/parser.cpp
+    src/ast.cpp
+    src/types.cpp
+    src/type_inference.cpp
+    src/ir.cpp
+    src/runtime.cpp
+    src/stdlib.cpp
+    src/bytecode.cpp
+    src/codegen.cpp
+    src/optimizations.cpp
+    src/refcount.cpp
+    src/advanced_types.cpp
+)
+
+set(PYPP_AOT_SOURCES
+    src/aot.cpp
+    src/jit.cpp
+    src/import_system.cpp
+    src/python_stdlib.cpp
+    src/c_api.cpp
+)
 
 # Core library
 add_library(py++-core ${PYPP_CORE_SOURCES})
@@ -87,6 +113,9 @@ endif()
 # Runner executable (p++)
 add_executable(p++ src/runner.cpp)
 
+# Compiler executable (py++c)
+add_executable(py++c src/main.cpp)
+
 # Link Windows libraries for p++ runner (needed for admin checks)
 if(WIN32)
     target_link_libraries(p++ advapi32)
@@ -94,6 +123,7 @@ endif()
 
 # Include directories
 target_include_directories(py++c PRIVATE include)
+target_link_libraries(py++c py++-core ${LLVM_LIBRARIES})
 
 if(PYPP_ENABLE_AOT)
     target_link_libraries(py++c py++-aot)
