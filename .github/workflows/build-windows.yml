@@ -80,16 +80,45 @@ jobs:
         echo Python++ (p++) Setup
         echo ===================
         echo.
+        echo This script will:
+        echo 1. Add Python++ to your PATH
+        echo 2. Associate .py+ files with the p++ runner
+        echo.
+        echo NOTE: This script must be run as Administrator for file associations.
+        echo.
+        pause
+        
+        REM Check for administrator privileges
+        net session >nul 2>&1
+        if %errorLevel% neq 0 (
+            echo.
+            echo ERROR: This script requires Administrator privileges.
+            echo Please right-click on setup.bat and select "Run as administrator"
+            echo.
+            pause
+            exit /b 1
+        )
+        
+        echo.
         echo Adding Python++ to your PATH...
-        setx PATH "%~dp0bin;%PATH%"
+        setx PATH "%~dp0bin;%PATH%" /M
         echo.
         echo Python++ has been added to your PATH.
-        echo Please restart your terminal for changes to take effect.
+        echo.
+        echo Associating .py+ files with Python++...
+        assoc .py+=PythonPlusPlus
+        ftype PythonPlusPlus="%~dp0bin\p++.exe" "%%1" %%*
+        echo.
+        echo .py+ files are now associated with the p++ runner.
+        echo Double-click any .py+ file to run it!
+        echo.
+        echo Please restart your terminal for PATH changes to take effect.
         echo.
         echo Usage:
-        echo   p++ script.py     - Compile and run a Python++ script
-        echo   py++c script.py   - Compile a Python++ script to executable
+        echo   p++ script.py+    - Compile and run a Python++ script
+        echo   py++c script.py+  - Compile a Python++ script to executable
         echo.
+        echo Setup complete!
         pause
         "@ | Out-File -FilePath "dist\setup.bat" -Encoding ASCII
         
@@ -97,11 +126,23 @@ jobs:
         @"
         # Python++ Windows Distribution
         
-        ## Installation
+        ## Quick Installation
         
         1. Extract this archive to a directory of your choice
-        2. Run setup.bat to add Python++ to your PATH
-        3. Restart your terminal
+        2. **Right-click on setup.bat and select "Run as administrator"**
+        3. The setup script will:
+           - Add Python++ to your system PATH
+           - Associate .py+ files with the p++ runner
+        4. Restart your terminal for changes to take effect
+        
+        **IMPORTANT:** setup.bat must be run as Administrator to configure file associations.
+        
+        ## What Gets Configured
+        
+        The setup script automatically:
+        - Adds `bin` directory to your system PATH
+        - Associates `.py+` file extension with `p++.exe`
+        - Enables double-clicking `.py+` files to run them
         
         ## Usage
         
@@ -111,15 +152,17 @@ jobs:
         p++ script.py+
         ```
         
+        Or simply **double-click any .py+ file** after running setup.bat!
+        
         ### Compile a script to an executable:
         ```
         py++c script.py -o myprogram
         py++c script.py+ -o myprogram
         ```
         
-        ### File Association
+        ## Manual File Association (if needed)
         
-        To associate .py+ files with the p++ runner:
+        If you didn't run setup.bat as administrator, you can manually associate files:
         
         1. Right-click on a .py+ file
         2. Select "Open with" -> "Choose another app"
@@ -127,16 +170,17 @@ jobs:
         4. Navigate to the bin folder and select p++.exe
         5. Check "Always use this app to open .py+ files"
         
-        Alternatively, run this command in an administrator command prompt:
+        Or run these commands in an administrator command prompt:
         ```
         assoc .py+=PythonPlusPlus
-        ftype PythonPlusPlus="%CD%\bin\p++.exe" "%1" %*
+        ftype PythonPlusPlus="<path-to-extracted-folder>\bin\p++.exe" "%1" %*
         ```
         
         ## Examples
         
         Check the examples folder for sample Python++ programs:
-        - examples/fibonacci.py - Fibonacci calculation
+        - examples/fibonacci.py+ - Fibonacci calculation (try double-clicking it!)
+        - examples/hello_world.py+ - Hello world example
         - examples/basic_operations.py - Basic Python operations
         - examples/functions.py - Function definitions and calls
         

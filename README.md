@@ -36,15 +36,16 @@ make -j$(nproc)
 
 Download the latest Windows binary release from the [Releases](../../releases) page.
 
-1. Extract the ZIP archive
-2. Run `setup.bat` to add Python++ to your PATH
-3. Restart your terminal
+1. Extract the ZIP archive to a directory of your choice
+2. **Right-click on `setup.bat` and select "Run as administrator"**
+3. The setup will automatically:
+   - Add Python++ to your system PATH
+   - Associate `.py+` files with the `p++` runner
+4. Restart your terminal for changes to take effect
 
-To associate `.py+` files with Python++, run as administrator:
-```cmd
-assoc .py+=PythonPlusPlus
-ftype PythonPlusPlus="C:\path\to\p++.exe" "%1" %*
-```
+After installation, you can:
+- Run Python++ scripts from the command line: `p++ script.py+`
+- Double-click `.py+` files to execute them directly!
 
 ### From Source
 
