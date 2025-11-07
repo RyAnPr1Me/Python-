@@ -12,8 +12,39 @@
 #include <llvm/Transforms/Utils.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/IR/Verifier.h>
+#include <sstream>
+
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 namespace pyplusplus {
+
+// Helper function to escape shell arguments for safe system() calls
+static std::string escapeShellArg(const std::string& arg) {
+#ifdef _WIN32
+    // Windows: escape quotes and backslashes, then wrap in quotes
+    std::string escaped;
+    for (char c : arg) {
+        if (c == '"' || c == '\\') {
+            escaped += '\\';
+        }
+        escaped += c;
+    }
+    return "\"" + escaped + "\"";
+#else
+    // Unix: use single quotes and escape single quotes within
+    std::string escaped;
+    for (char c : arg) {
+        if (c == '\'') {
+            escaped += "'\\''";
+        } else {
+            escaped += c;
+        }
+    }
+    return "'" + escaped + "'";
+#endif
+}
 
 LLVMCodeGenerator::LLVMCodeGenerator(TypeSystem& type_system) 
     : type_system(type_system), context(std::make_unique<llvm::LLVMContext>()),
@@ -919,12 +950,23 @@ bool LLVMCodeGenerator::generateNativeExecutable(const std::string& output_path)
         return false;
     }
     
-    // Link with Python runtime
-    std::string link_command = "clang++ -o " + output_path + " " + obj_file + 
-                              " -lpython3.10 -lpthread -ldl -lutil";
+    // Build link command with proper shell escaping
+    std::ostringstream link_cmd;
+    link_cmd << "clang++ -o " << escapeShellArg(output_path) 
+             << " " << escapeShellArg(obj_file)
+             << " $(pkg-config --libs python3) -lpthread -ldl -lutil";
     
-    int result = std::system(link_command.c_str());
+    int result = std::system(link_cmd.str().c_str());
+    
+    // On Unix systems, check the actual exit status
+#ifndef _WIN32
+    if (WIFEXITED(result)) {
+        return WEXITSTATUS(result) == 0;
+    }
+    return false;
+#else
     return result == 0;
+#endif
 }
 
 bool LLVMCodeGenerator::generateSharedLibrary(const std::string& output_path) {
@@ -934,12 +976,23 @@ bool LLVMCodeGenerator::generateSharedLibrary(const std::string& output_path) {
         return false;
     }
     
-    // Create shared library
-    std::string link_command = "clang++ -shared -o " + output_path + " " + obj_file + 
-                              " -lpython3.10";
+    // Build link command with proper shell escaping
+    std::ostringstream link_cmd;
+    link_cmd << "clang++ -shared -o " << escapeShellArg(output_path)
+             << " " << escapeShellArg(obj_file)
+             << " $(pkg-config --libs python3)";
     
-    int result = std::system(link_command.c_str());
+    int result = std::system(link_cmd.str().c_str());
+    
+    // On Unix systems, check the actual exit status
+#ifndef _WIN32
+    if (WIFEXITED(result)) {
+        return WEXITSTATUS(result) == 0;
+    }
+    return false;
+#else
     return result == 0;
+#endif
 }
 
 bool LLVMCodeGenerator::setTargetTriple(const std::string& triple) {

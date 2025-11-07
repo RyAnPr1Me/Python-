@@ -423,12 +423,24 @@ std::shared_ptr<Type> TypeHintParser::parseLiteralType() {
             try {
                 int value = std::stoi(num_str);
                 values.push_back(value);
-            } catch (...) {
-                // Try float
+            } catch (const std::invalid_argument&) {
+                // Not a valid integer, try float
                 try {
                     double value = std::stod(num_str);
                     // For now, skip float literals
-                } catch (...) {
+                } catch (const std::invalid_argument&) {
+                    return type_system.getUnknownType();
+                } catch (const std::out_of_range&) {
+                    return type_system.getUnknownType();
+                }
+            } catch (const std::out_of_range&) {
+                // Integer out of range, try float
+                try {
+                    double value = std::stod(num_str);
+                    // For now, skip float literals
+                } catch (const std::invalid_argument&) {
+                    return type_system.getUnknownType();
+                } catch (const std::out_of_range&) {
                     return type_system.getUnknownType();
                 }
             }

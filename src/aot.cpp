@@ -10,14 +10,42 @@
 #elif defined(__APPLE__)
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #elif defined(__linux__)
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
 namespace pyplusplus {
+
+// Helper function to escape shell arguments for safe system() calls
+static std::string escapeShellArg(const std::string& arg) {
+#ifdef _WIN32
+    // Windows: escape quotes and backslashes, then wrap in quotes
+    std::string escaped;
+    for (char c : arg) {
+        if (c == '"' || c == '\\') {
+            escaped += '\\';
+        }
+        escaped += c;
+    }
+    return "\"" + escaped + "\"";
+#else
+    // Unix: use single quotes and escape single quotes within
+    std::string escaped;
+    for (char c : arg) {
+        if (c == '\'') {
+            escaped += "'\\''";
+        } else {
+            escaped += c;
+        }
+    }
+    return "'" + escaped + "'";
+#endif
+}
 
 // ObjectFile implementation
 bool ObjectFile::writeToFile() const {
@@ -272,16 +300,26 @@ bool Linker::resolveSymbols() {
 }
 
 bool Linker::invokeSystemLinker(const std::string& output_path, const std::vector<std::string>& args) {
-    // Build linker command
-    std::string command = "ld"; // Use system linker
+    // Build linker command with proper escaping
+    std::ostringstream command;
+    command << "ld"; // Use system linker
     
     for (const auto& arg : args) {
-        command += " " + arg;
+        command << " " << escapeShellArg(arg);
     }
     
     // Execute linker
-    int result = std::system(command.c_str());
+    int result = std::system(command.str().c_str());
+    
+    // On Unix systems, check the actual exit status
+#ifndef _WIN32
+    if (WIFEXITED(result)) {
+        return WEXITSTATUS(result) == 0;
+    }
+    return false;
+#else
     return result == 0;
+#endif
 }
 
 std::vector<std::string> Linker::buildLinkerArgs(const std::string& output_path) {
