@@ -4,6 +4,7 @@ cmake-build-*/
 *.dir/
 _codeql_build_dir/
 _codeql_detected_source_root
+dist/
 
 # Compiled binaries
 *.exe
@@ -14,6 +15,8 @@ _codeql_detected_source_root
 *.dylib
 *.a
 *.lib
+*.o
+*.obj
 
 # CMake
 CMakeCache.txt
@@ -21,6 +24,7 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 *.cmake
+!CMakeLists.txt
 
 # IDE
 .vscode/
@@ -38,3 +42,20 @@ Thumbs.db
 
 # Test outputs
 Testing/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
+
+# Python cache (if any Python scripts are used for build)
+__pycache__/
+*.pyc
+*.pyo
+
+# Coverage
+*.gcov
+*.gcda
+*.gcno
+coverage/
