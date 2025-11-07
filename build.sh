@@ -246,65 +246,15 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-print_success "Build completed successfully"
-
-# Run tests if enabled
-if [[ "$ENABLE_TESTS" == "ON" ]]; then
-    print_status "Running tests..."
-    ctest --output-on-failure --parallel "$PARALLEL_JOBS"
-    
-    if [[ $? -eq 0 ]]; then
-        print_success "All tests passed"
-    else
-        print_warning "Some tests failed"
-    fi
-fi
-
-# Install if requested
-if [[ "$INSTALL_AFTER_BUILD" == "ON" ]]; then
-    print_status "Installing..."
-    make install
-    
-    if [[ $? -eq 0 ]]; then
-        print_success "Installation completed"
-    else
-        print_error "Installation failed"
-        exit 1
-    fi
-fi
-
-# Create package if requested
-if [[ "$CREATE_PACKAGE" == "ON" ]]; then
-    print_status "Creating distribution package..."
-    cpack
-    
-    if [[ $? -eq 0 ]]; then
-        print_success "Package created successfully"
-        
-        # List created packages
-        echo "Created packages:"
-        find . -maxdepth 1 -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" -o -name "*.zip" | while read file; do
-            echo "  $file ($(du -h "$file" | cut -f1))"
-        done
-    else
-        print_error "Package creation failed"
-        exit 1
-    fi
-fi
-
-# Print summary
-print_status "Build Summary"
-echo "  Executable: $BUILD_DIR/py++c"
-echo "  Libraries: $BUILD_DIR/lib/"
-echo "  Examples: $BUILD_DIR/examples/"
-
-if [[ "$ENABLE_TESTS" == "ON" ]]; then
-    echo "  Tests: $BUILD_DIR/tests/"
-fi
-
-if [[ "$INSTALL_AFTER_BUILD" == "ON" ]]; then
-    echo "  Installation: $INSTALL_PREFIX/"
-fi
-
-print_success "Python++ build completed successfully!"
-print_status "You can now run the compiler with: $BUILD_DIR/py++c --help"
+echo "Build completed successfully!"
+echo "Compiler executable: build/py++c"
+echo "Runner executable: build/p++"
+echo ""
+echo "Usage examples (Compiler):"
+echo "  ./py++c examples/fibonacci.py -o fibonacci"
+echo "  ./py++c examples/basic_operations.py -o basic_ops -v"
+echo "  ./py++c examples/functions.py -o functions -O3 -S"
+echo ""
+echo "Usage examples (Runner):"
+echo "  ./p++ examples/hello_world.py+"
+echo "  ./p++ examples/fibonacci.py+"

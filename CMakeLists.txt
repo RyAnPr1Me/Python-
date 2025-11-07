@@ -51,34 +51,12 @@ include_directories(${PYTHON3_INCLUDE_DIRS})
 link_directories(${LLVM_LIBRARY_DIR})
 link_directories(${PYTHON3_LIBRARY_DIRS})
 
-# Source files
-set(PYPP_CORE_SOURCES
-    src/lexer.cpp
-    src/parser.cpp
-    src/ast.cpp
-    src/type_inference.cpp
-    src/types.cpp
-    src/ir.cpp
-    src/codegen.cpp
-    src/runtime.cpp
-    src/refcount.cpp
-    src/stdlib.cpp
-    src/advanced_types.cpp
-    src/optimizations.cpp
-    src/python_stdlib.cpp
+# Source files (exclude runner.cpp)
+file(GLOB_RECURSE SOURCES 
+    "src/*.cpp"
+    "src/*.c"
 )
-
-set(PYPP_AOT_SOURCES
-    src/bytecode.cpp
-    src/import_system.cpp
-    src/c_api.cpp
-    src/aot.cpp
-    src/jit.cpp
-)
-
-set(PYPP_MAIN_SOURCES
-    src/main.cpp
-)
+list(FILTER SOURCES EXCLUDE REGEX ".*runner\\.cpp$")
 
 # Core library
 add_library(py++-core ${PYPP_CORE_SOURCES})
@@ -106,154 +84,44 @@ if(PYPP_ENABLE_AOT)
     endif()
 endif()
 
-# Main compiler executable
-add_executable(py++c ${PYPP_MAIN_SOURCES})
-target_link_libraries(py++c py++-core)
+# Runner executable (p++)
+add_executable(p++ src/runner.cpp)
+
+# Link Windows libraries for p++ runner (needed for admin checks)
+if(WIN32)
+    target_link_libraries(p++ advapi32)
+endif()
+
+# Include directories
+target_include_directories(py++c PRIVATE include)
 
 if(PYPP_ENABLE_AOT)
     target_link_libraries(py++c py++-aot)
 endif()
 
-# Runtime library
-add_library(py++-runtime
-    src/runtime.cpp
-    src/refcount.cpp
-    src/c_api.cpp
-)
-target_include_directories(py++-runtime PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(py++-runtime ${PYTHON3_LIBRARIES})
-
-# Examples
-if(PYPP_BUILD_EXAMPLES)
-    add_subdirectory(examples)
+# Runtime library (conditionally built if runtime directory exists)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+    add_library(py++-runtime STATIC
+        runtime/object.cpp
+        runtime/memory.cpp
+        runtime/exceptions.cpp
+        runtime/builtins.cpp
+    )
+    target_include_directories(py++-runtime PUBLIC include)
+    install(TARGETS py++-runtime DESTINATION lib)
 endif()
 
-# Tests
-if(PYPP_BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
+# Tests (optional - only if GTest is available and BUILD_TESTING is ON)
+if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+    find_package(GTest QUIET)
+    if(GTest_FOUND)
+        enable_testing()
+        add_subdirectory(tests)
+    else()
+        message(STATUS "GTest not found, skipping tests")
+    endif()
 endif()
 
 # Installation
-include(GNUInstallDirs)
-
-install(TARGETS py++-core py++-runtime py++c
-    EXPORT PythonPlusPlusTargets
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
-
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-
-install(EXPORT PythonPlusPlusTargets
-    FILE PythonPlusPlusTargets.cmake
-    NAMESPACE PythonPlusPlus::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PythonPlusPlus
-)
-
-# Create package configuration
-include(CMakePackageConfigHelpers)
-
-configure_package_config_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PythonPlusPlusConfig.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/PythonPlusPlusConfig.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PythonPlusPlus
-)
-
-write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/PythonPlusPlusConfigVersion.cmake"
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
-)
-
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/PythonPlusPlusConfig.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/PythonPlusPlusConfigVersion.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PythonPlusPlus
-)
-
-# Custom targets for AOT compilation
-if(PYPP_ENABLE_AOT)
-    # AOT compilation of Python files
-    function(add_aot_target source_file output_name)
-        add_custom_command(
-            OUTPUT ${output_name}
-            COMMAND py++c -a -O3 ${source_file} -o ${output_name}
-            DEPENDS ${source_file} py++c
-            COMMENT "AOT compiling ${source_file} to ${output_name}"
-        )
-        add_custom_target(aot_${output_name}
-            DEPENDS ${output_name}
-            COMMENT "AOT compilation target for ${output_name}"
-        )
-    endfunction()
-    
-    # Batch AOT compilation
-    function(add_aot_batch target_name)
-        add_custom_target(${target_name}
-            COMMAND ${CMAKE_COMMAND} -E echo "Starting batch AOT compilation..."
-            COMMENT "Batch AOT compilation for ${target_name}"
-        )
-    endfunction()
-endif()
-
-# Documentation generation
-find_package(Doxygen QUIET)
-if(DOXYGEN_FOUND)
-    set(DOXYGEN_INPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    set(DOXYGEN_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/docs)
-    
-    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/docs/Doxyfile.in
-                   ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile @ONLY)
-    
-    add_custom_target(docs
-        ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Generating API documentation with Doxygen"
-        VERBATIM
-    )
-endif()
-
-# Packaging
-set(CPACK_PACKAGE_NAME "PythonPlusPlus")
-set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "AOT-Compiled Python++ Compiler")
-set(CPACK_PACKAGE_VENDOR "Python++ Project")
-set(CPACK_PACKAGE_CONTACT "ryan.j.manzo@gmail.com")
-
-if(WIN32)
-    set(CPACK_GENERATOR "NSIS;ZIP")
-else()
-    set(CPACK_GENERATOR "TGZ;DEB;RPM")
-endif()
-
-include(CPack)
-
-# Configuration summary
-message(STATUS "")
-message(STATUS "Python++ Configuration Summary:")
-message(STATUS "  Version: ${PROJECT_VERSION}")
-message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
-message(STATUS "")
-message(STATUS "Features:")
-message(STATUS "  AOT compilation: ${PYPP_ENABLE_AOT}")
-message(STATUS "  JIT compilation: ${PYPP_ENABLE_JIT}")
-message(STATUS "  Profiling: ${PYPP_ENABLE_PROFILING}")
-message(STATUS "  Debug: ${PYPP_ENABLE_DEBUG}")
-message(STATUS "  Shared libraries: ${PYPP_BUILD_SHARED_LIBS}")
-message(STATUS "")
-message(STATUS "Dependencies:")
-message(STATUS "  LLVM version: ${LLVM_PACKAGE_VERSION}")
-message(STATUS "  Python version: ${PYTHON3_VERSION}")
-message(STATUS "")
-message(STATUS "Build directories:")
-message(STATUS "  Source: ${CMAKE_CURRENT_SOURCE_DIR}")
-message(STATUS "  Binary: ${CMAKE_CURRENT_BINARY_DIR}")
-message(STATUS "  Install: ${CMAKE_INSTALL_PREFIX}")
-message(STATUS "")
+install(TARGETS py++c p++ DESTINATION bin)
+install(DIRECTORY include/ DESTINATION include)
