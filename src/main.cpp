@@ -10,9 +10,40 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <sstream>
 #include <getopt.h>
 
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
+
 namespace pyplusplus {
+
+// Helper function to escape shell arguments for safe system() calls
+static std::string escapeShellArg(const std::string& arg) {
+#ifdef _WIN32
+    // Windows: escape quotes and backslashes, then wrap in quotes
+    std::string escaped;
+    for (char c : arg) {
+        if (c == '"' || c == '\\') {
+            escaped += '\\';
+        }
+        escaped += c;
+    }
+    return "\"" + escaped + "\"";
+#else
+    // Unix: use single quotes and escape single quotes within
+    std::string escaped;
+    for (char c : arg) {
+        if (c == '\'') {
+            escaped += "'\\''";
+        } else {
+            escaped += c;
+        }
+    }
+    return "'" + escaped + "'";
+#endif
+}
 
 class Compiler {
 private:
@@ -257,16 +288,33 @@ bool Compiler::linkExecutable() {
         std::cout << "Linking executable..." << std::endl;
     }
     
-    // For simplicity, we'll use a basic system call to link
-    // In a real implementation, we'd use LLVM's linking capabilities
+    // Build link command with proper escaping
     std::string obj_filename = output_file + ".o";
-    std::string link_command = "clang++ -o " + output_file + " " + obj_filename + " -lpy++-runtime";
+    std::ostringstream link_cmd;
+    link_cmd << "clang++ -o " << escapeShellArg(output_file) 
+             << " " << escapeShellArg(obj_filename) 
+             << " -lpy++-runtime";
     
-    int result = std::system(link_command.c_str());
+    int result = std::system(link_cmd.str().c_str());
+    
+    // On Unix systems, check the actual exit status
+#ifndef _WIN32
+    if (WIFEXITED(result)) {
+        int exit_code = WEXITSTATUS(result);
+        if (exit_code != 0) {
+            reportError("Linking failed with exit code: " + std::to_string(exit_code));
+            return false;
+        }
+    } else {
+        reportError("Linking failed abnormally");
+        return false;
+    }
+#else
     if (result != 0) {
         reportError("Linking failed with exit code: " + std::to_string(result));
         return false;
     }
+#endif
     
     if (verbose) {
         std::cout << "Executable created: " << output_file << std::endl;
