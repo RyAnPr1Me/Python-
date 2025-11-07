@@ -5,6 +5,10 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <functional>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 namespace pyplusplus {
 
@@ -15,6 +19,10 @@ class PyString;
 class PyList;
 class PyDict;
 class PyFunction;
+class PyModule;
+class PyFrame;
+class PyThreadState;
+class PyInterpreter;
 
 // Object header - common to all Python objects
 struct ObjectHeader {
@@ -384,6 +392,168 @@ public:
     PyObject* getExceptionType() const { return exception_type; }
 };
 
+// Frame object for execution context
+class PyFrame {
+private:
+    PyFrame* previous;
+    PyFunction* function;
+    PyObject* locals;
+    PyObject* globals;
+    PyObject* builtins;
+    std::vector<PyObject*> stack;
+    size_t stack_pointer;
+    uint32_t instruction_pointer;
+    bool is_executing;
+    
+public:
+    PyFrame(PyFunction* func, PyObject* globals, PyObject* builtins, PyFrame* prev = nullptr);
+    ~PyFrame();
+    
+    // Stack operations
+    void push(PyObject* obj);
+    PyObject* pop();
+    PyObject* peek(size_t offset = 0);
+    void clearStack();
+    
+    // Execution control
+    void setInstructionPointer(uint32_t ip) { instruction_pointer = ip; }
+    uint32_t getInstructionPointer() const { return instruction_pointer; }
+    void advanceInstructionPointer(uint32_t offset = 1) { instruction_pointer += offset; }
+    
+    // Accessors
+    PyFrame* getPrevious() const { return previous; }
+    PyFunction* getFunction() const { return function; }
+    PyObject* getLocals() const { return locals; }
+    PyObject* getGlobals() const { return globals; }
+    PyObject* getBuiltins() const { return builtins; }
+    bool isExecuting() const { return is_executing; }
+    void setExecuting(bool executing) { is_executing = executing; }
+    
+    // Variable access
+    PyObject* getLocal(const std::string& name);
+    void setLocal(const std::string& name, PyObject* value);
+    PyObject* getGlobal(const std::string& name);
+    void setGlobal(const std::string& name, PyObject* value);
+};
+
+// Thread state for multi-threading
+class PyThreadState {
+private:
+    std::thread::id thread_id;
+    PyFrame* current_frame;
+    PyObject* current_exception;
+    std::recursive_mutex gil_mutex;
+    std::atomic<bool> gil_held;
+    
+public:
+    PyThreadState();
+    ~PyThreadState();
+    
+    // Frame management
+    void pushFrame(PyFrame* frame);
+    void popFrame();
+    PyFrame* getCurrentFrame() const { return current_frame; }
+    
+    // Exception handling
+    void setException(PyObject* exception);
+    PyObject* getException() const { return current_exception; }
+    void clearException();
+    bool hasException() const { return current_exception != nullptr; }
+    
+    // GIL (Global Interpreter Lock) management
+    void acquireGIL();
+    void releaseGIL();
+    bool hasGIL() const { return gil_held; }
+    
+    // Thread identification
+    std::thread::id getThreadId() const { return thread_id; }
+    
+    // Static thread management
+    static PyThreadState* getCurrent();
+    static void setCurrent(PyThreadState* state);
+    static std::vector<PyThreadState*> getAllThreads();
+};
+
+// Module system for AOT compilation
+class PyModule {
+private:
+    std::string name;
+    PyObject* globals;
+    void* module_handle;  // For dynamic libraries
+    bool is_loaded;
+    
+public:
+    PyModule(const std::string& name);
+    ~PyModule();
+    
+    // Module lifecycle
+    bool load(const std::string& path);
+    bool unload();
+    bool isLoaded() const { return is_loaded; }
+    
+    // Symbol resolution
+    void* getSymbol(const std::string& name);
+    PyFunction* getFunction(const std::string& name);
+    PyObject* getGlobal(const std::string& name);
+    
+    // Global variable access
+    void setGlobal(const std::string& name, PyObject* value);
+    PyObject* getGlobals() const { return globals; }
+    
+    // Module information
+    const std::string& getName() const { return name; }
+    void* getModuleHandle() const { return module_handle; }
+    
+    // Static module management
+    static PyModule* import(const std::string& name);
+    static PyModule* getImported(const std::string& name);
+    static std::vector<PyModule*> getAllImported();
+};
+
+// Enhanced runtime for AOT compilation
+class AOTRuntime {
+private:
+    static bool initialized;
+    static std::unordered_map<std::string, PyModule*> imported_modules;
+    static std::vector<PyThreadState*> thread_states;
+    static std::mutex runtime_mutex;
+    
+public:
+    // Initialization and cleanup
+    static void initialize();
+    static void shutdown();
+    static bool isInitialized() { return initialized; }
+    
+    // Module management
+    static PyModule* importModule(const std::string& name);
+    static bool loadCompiledModule(const std::string& name, const std::string& path);
+    static void unloadModule(const std::string& name);
+    
+    // Thread management
+    static PyThreadState* createThreadState();
+    static void destroyThreadState(PyThreadState* state);
+    static PyThreadState* getCurrentThread();
+    
+    // Execution
+    static PyObject* executeFunction(PyFunction* function, const std::vector<PyObject*>& args);
+    static PyObject* executeModule(const std::string& module_name, const std::string& function_name);
+    
+    // Memory management
+    static void collectGarbage();
+    static size_t getMemoryUsage();
+    static void setMemoryLimit(size_t limit_bytes);
+    
+    // Profiling and debugging
+    static void enableProfiling(bool enable);
+    static void dumpProfilingData();
+    static void enableDebugMode(bool enable);
+    
+    // JIT compilation (for hot paths)
+    static void* compileFunction(const std::string& bytecode, size_t length);
+    static bool isJITEnabled();
+    static void enableJIT(bool enable);
+};
+
 // Runtime initialization
 class Runtime {
 private:
@@ -408,6 +578,48 @@ public:
     static PyNone* NoneObject;
     static PyBool* TrueObject;
     static PyBool* FalseObject;
+    
+    // AOT runtime integration
+    static AOTRuntime* getAOTRuntime();
 };
+
+// C API compatibility layer
+extern "C" {
+    // Object management
+    void* Py_IncRef(void* obj);
+    void Py_DecRef(void* obj);
+    void* PyObject_Malloc(size_t size);
+    void PyObject_Free(void* ptr);
+    
+    // Type creation
+    void* PyLong_FromLong(long value);
+    void* PyFloat_FromDouble(double value);
+    void* PyUnicode_FromString(const char* str);
+    
+    // Operations
+    void* PyNumber_Add(void* left, void* right);
+    void* PyNumber_Subtract(void* left, void* right);
+    void* PyNumber_Multiply(void* left, void* right);
+    void* PyNumber_TrueDivide(void* left, void* right);
+    void* PyObject_RichCompare(void* left, void* right, int opid);
+    
+    // Function calls
+    void* PyObject_Call(void* callable, void* args, void* kwargs);
+    void* PyObject_CallFunction(void* callable, const char* format, ...);
+    
+    // Exception handling
+    void* PyErr_Occurred();
+    void PyErr_SetString(void* exception_type, const char* message);
+    void PyErr_Clear();
+    
+    // Module system
+    void* PyImport_ImportModule(const char* name);
+    void* PyModule_GetDict(void* module);
+    
+    // Runtime initialization
+    void Py_Initialize();
+    void Py_Finalize();
+    int Py_IsInitialized();
+}
 
 } // namespace pyplusplus

@@ -1,29 +1,55 @@
 cmake_minimum_required(VERSION 3.16)
 project(PythonPlusPlus VERSION 1.0.0 LANGUAGES CXX)
 
+# Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Find LLVM
+# Build options
+option(PYPP_BUILD_TESTS "Build tests" ON)
+option(PYPP_BUILD_EXAMPLES "Build examples" ON)
+option(PYPP_ENABLE_AOT "Enable AOT compilation" ON)
+option(PYPP_ENABLE_JIT "Enable JIT compilation" ON)
+option(PYPP_ENABLE_PROFILING "Enable profiling support" OFF)
+option(PYPP_ENABLE_DEBUG "Enable debug features" OFF)
+option(PYPP_BUILD_SHARED_LIBS "Build shared libraries" ON)
+
+# Compiler-specific options
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-Wall -Wextra -Wpedantic)
+    if(PYPP_ENABLE_DEBUG)
+        add_compile_options(-g -O0 -DDEBUG)
+    else()
+        add_compile_options(-O3 -DNDEBUG)
+    endif()
+endif()
+
+if(MSVC)
+    add_compile_options(/W4)
+    if(PYPP_ENABLE_DEBUG)
+        add_compile_options(/Od /DEBUG)
+    else()
+        add_compile_options(/O2)
+    endif()
+endif()
+
+# Find required packages
 find_package(LLVM REQUIRED CONFIG)
-message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
-message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+find_package(PkgConfig REQUIRED)
 
-# Include LLVM headers
+# Python development libraries
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PYTHON3 REQUIRED python3>=3.10)
+
+# Include directories
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(${LLVM_INCLUDE_DIRS})
-separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
-add_definitions(${LLVM_DEFINITIONS_LIST})
+include_directories(${PYTHON3_INCLUDE_DIRS})
 
-# LLVM libraries
-llvm_map_components_to_libnames(llvm_libs
-    core
-    executionengine
-    interpreter
-    mc
-    support
-    nativecodegen
-    object
-)
+# Link directories
+link_directories(${LLVM_LIBRARY_DIR})
+link_directories(${PYTHON3_LIBRARY_DIRS})
 
 # Source files (exclude runner.cpp)
 file(GLOB_RECURSE SOURCES 
@@ -32,14 +58,31 @@ file(GLOB_RECURSE SOURCES
 )
 list(FILTER SOURCES EXCLUDE REGEX ".*runner\\.cpp$")
 
-# Header files
-file(GLOB_RECURSE HEADERS
-    "include/*.h"
-    "include/*.hpp"
+# Core library
+add_library(py++-core ${PYPP_CORE_SOURCES})
+target_include_directories(py++-core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(py++-core ${LLVM_LIBRARIES})
+target_compile_definitions(py++-core PUBLIC ${LLVM_DEFINITIONS})
+target_compile_options(py++-core PUBLIC ${LLVM_COMPILE_OPTIONS})
 
-# Compiler executable
-add_executable(py++c ${SOURCES} ${HEADERS})
+# AOT library (if enabled)
+if(PYPP_ENABLE_AOT)
+    add_library(py++-aot ${PYPP_AOT_SOURCES})
+    target_link_libraries(py++-aot py++-core ${PYTHON3_LIBRARIES} ${LLVM_LIBRARIES})
+    target_include_directories(py++-aot PUBLIC ${PYTHON3_INCLUDE_DIRS})
+    
+    # Platform-specific linking
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(py++-aot dl pthread)
+    endif()
+    
+    if(APPLE)
+        target_link_libraries(py++-aot dl pthread)
+    endif()
+endif()
 
 # Runner executable (p++)
 add_executable(p++ src/runner.cpp)
@@ -52,8 +95,9 @@ endif()
 # Include directories
 target_include_directories(py++c PRIVATE include)
 
-# Link LLVM libraries
-target_link_libraries(py++c ${llvm_libs})
+if(PYPP_ENABLE_AOT)
+    target_link_libraries(py++c py++-aot)
+endif()
 
 # Runtime library (conditionally built if runtime directory exists)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/runtime")

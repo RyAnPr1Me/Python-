@@ -135,11 +135,18 @@ public:
 
 // Global variable
 class IRGlobal : public IRValue {
+private:
+    std::shared_ptr<IRValue> initializer;
+    
 public:
     IRGlobal(std::shared_ptr<Type> type, const std::string& name)
         : IRValue(IRValueType::GLOBAL, std::move(type), name) {}
     
+    IRGlobal(std::shared_ptr<Type> type, const std::string& name, std::shared_ptr<IRValue> init)
+        : IRValue(IRValueType::GLOBAL, std::move(type), name), initializer(std::move(init)) {}
+    
     std::string toString() const override;
+    const IRValue* getInitializer() const { return initializer.get(); }
 };
 
 // Temporary value (result of instruction)
@@ -193,6 +200,151 @@ class IRUnaryOp : public IRInstruction {
 public:
     IRUnaryOp(IROp op, std::shared_ptr<Type> result_type, std::shared_ptr<IRValue> operand)
         : IRInstruction(op, std::move(result_type), {std::move(operand)}) {}
+    
+    std::string toString() const override;
+};
+
+// Call instruction
+class IRCall : public IRInstruction {
+public:
+    IRCall(std::shared_ptr<Type> result_type, std::shared_ptr<IRValue> callee,
+           std::vector<std::shared_ptr<IRValue>> args)
+        : IRInstruction(IROp::CALL, std::move(result_type), 
+                       {std::move(callee)}, "call") {
+        for (auto& arg : args) {
+            getOperands().push_back(std::move(arg));
+        }
+    }
+    
+    std::shared_ptr<IRValue> getCallee() const { return getOperands()[0]; }
+    std::vector<std::shared_ptr<IRValue>> getArguments() const {
+        return std::vector<std::shared_ptr<IRValue>>(getOperands().begin() + 1, getOperands().end());
+    }
+    
+    std::string toString() const override;
+};
+
+// Jump instruction
+class IRJump : public IRInstruction {
+private:
+    IRBasicBlock* target;
+    
+public:
+    IRJump(IRBasicBlock* target)
+        : IRInstruction(IROp::JUMP, nullptr, {}), target(target) {}
+    
+    IRBasicBlock* getTarget() const { return target; }
+    void setTarget(IRBasicBlock* t) { target = t; }
+    
+    std::string toString() const override;
+};
+
+// Conditional jump instruction
+class IRJumpIf : public IRInstruction {
+private:
+    IRBasicBlock* true_target;
+    IRBasicBlock* false_target;
+    
+public:
+    IRJumpIf(std::shared_ptr<IRValue> condition, IRBasicBlock* true_target, IRBasicBlock* false_target)
+        : IRInstruction(IROp::JUMP_IF_TRUE, nullptr, {condition}), 
+          true_target(true_target), false_target(false_target) {}
+    
+    std::shared_ptr<IRValue> getCondition() const { return getOperands()[0]; }
+    IRBasicBlock* getTrueTarget() const { return true_target; }
+    IRBasicBlock* getFalseTarget() const { return false_target; }
+    
+    std::string toString() const override;
+};
+
+// Return instruction
+class IRReturn : public IRInstruction {
+public:
+    IRReturn(std::shared_ptr<IRValue> value = nullptr)
+        : IRInstruction(IROp::RETURN, nullptr, value ? std::vector<std::shared_ptr<IRValue>>{value} : std::vector<std::shared_ptr<IRValue>>{}) {}
+    
+    std::shared_ptr<IRValue> getValue() const { 
+        return getOperands().empty() ? nullptr : getOperands()[0]; 
+    }
+    
+    std::string toString() const override;
+};
+
+// Memory instructions
+class IRLoad : public IRInstruction {
+public:
+    IRLoad(std::shared_ptr<Type> result_type, std::shared_ptr<IRValue> address)
+        : IRInstruction(IROp::LOAD, std::move(result_type), {std::move(address)}) {}
+    
+    std::shared_ptr<IRValue> getAddress() const { return getOperands()[0]; }
+    
+    std::string toString() const override;
+};
+
+class IRStore : public IRInstruction {
+public:
+    IRStore(std::shared_ptr<IRValue> value, std::shared_ptr<IRValue> address)
+        : IRInstruction(IROp::STORE, nullptr, {std::move(value), std::move(address)}) {}
+    
+    std::shared_ptr<IRValue> getValue() const { return getOperands()[0]; }
+    std::shared_ptr<IRValue> getAddress() const { return getOperands()[1]; }
+    
+    std::string toString() const override;
+};
+
+class IRAlloc : public IRInstruction {
+public:
+    IRAlloc(std::shared_ptr<Type> result_type)
+        : IRInstruction(IROp::ALLOC, std::move(result_type), {}) {}
+    
+    std::string toString() const override;
+};
+
+// Collection building instructions
+class IRBuildTuple : public IRInstruction {
+public:
+    IRBuildTuple(std::shared_ptr<Type> result_type, std::vector<std::shared_ptr<IRValue>> elements)
+        : IRInstruction(IROp::LIST_CREATE, std::move(result_type), std::move(elements)) {}
+    
+    std::vector<std::shared_ptr<IRValue>> getElements() const { return getOperands(); }
+    
+    std::string toString() const override;
+};
+
+class IRBuildList : public IRInstruction {
+public:
+    IRBuildList(std::shared_ptr<Type> result_type, std::vector<std::shared_ptr<IRValue>> elements)
+        : IRInstruction(IROp::LIST_CREATE, std::move(result_type), std::move(elements)) {}
+    
+    std::vector<std::shared_ptr<IRValue>> getElements() const { return getOperands(); }
+    
+    std::string toString() const override;
+};
+
+class IRBuildSet : public IRInstruction {
+public:
+    IRBuildSet(std::shared_ptr<Type> result_type, std::vector<std::shared_ptr<IRValue>> elements)
+        : IRInstruction(IROp::LIST_CREATE, std::move(result_type), std::move(elements)) {}
+    
+    std::vector<std::shared_ptr<IRValue>> getElements() const { return getOperands(); }
+    
+    std::string toString() const override;
+};
+
+class IRBuildMap : public IRInstruction {
+private:
+    std::vector<std::shared_ptr<IRValue>> keys;
+    std::vector<std::shared_ptr<IRValue>> values;
+    
+public:
+    IRBuildMap(std::shared_ptr<Type> result_type, 
+               std::vector<std::shared_ptr<IRValue>> keys,
+               std::vector<std::shared_ptr<IRValue>> values)
+        : IRInstruction(IROp::DICT_CREATE, std::move(result_type), {}),
+          keys(std::move(keys)), values(std::move(values)) {}
+    
+    const std::vector<std::shared_ptr<IRValue>>& getKeys() const { return keys; }
+    const std::vector<std::shared_ptr<IRValue>>& getValues() const { return values; }
     
     std::string toString() const override;
 };
